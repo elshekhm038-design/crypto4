@@ -13,21 +13,26 @@ def get_data():
 
     coins = []
     for d in data:
-        if isinstance(d.get('symbol'), str) and d['symbol'].endswith('USDT'):
-            vol = float(d['quoteVolume'])
-            chg = abs(float(d['priceChangePercent']))
-            bid = float(d['bidPrice'])
-            ask = float(d['askPrice'])
-            spread = (ask - bid) / bid if bid else 0
-            if spread > 0:
-                liquidity = (vol * chg) / spread
-                coins.append([
-                    d['symbol'],
-                    round(vol / 1_000_000, 2),
-                    round(chg, 2),
-                    round(spread * 100, 4),
-                    round(liquidity / 1_000_000, 2)
-                ])
+        # ✅ تأكد أن العنصر dict وفيه المفتاح symbol
+        if isinstance(d, dict) and isinstance(d.get('symbol'), str) and d['symbol'].endswith('USDT'):
+            try:
+                vol = float(d['quoteVolume'])
+                chg = abs(float(d['priceChangePercent']))
+                bid = float(d['bidPrice'])
+                ask = float(d['askPrice'])
+                spread = (ask - bid) / bid if bid else 0
+                if spread > 0:
+                    liquidity = (vol * chg) / spread
+                    coins.append([
+                        d['symbol'],
+                        round(vol / 1_000_000, 2),
+                        round(chg, 2),
+                        round(spread * 100, 4),
+                        round(liquidity / 1_000_000, 2)
+                    ])
+            except Exception:
+                # لو حصل أي خطأ في تحويل الأرقام، تجاهل الصف
+                continue
 
     df = pd.DataFrame(coins, columns=["Symbol", "Volume (M USDT)", "Change %", "Spread %", "Liquidity Score"])
     df = df.sort_values(by="Liquidity Score", ascending=False).head(20)
