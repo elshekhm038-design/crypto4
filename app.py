@@ -4,47 +4,36 @@ import requests
 
 st.set_page_config(page_title="Crypto Liquidity Monitor", layout="wide")
 
-st.title("💧 Crypto Liquidity Monitor (Top 20)")
-st.caption("Source: Binance API — Updated manually")
+st.title("💧 Top 20 Most Liquid Cryptos (CoinGecko Source)")
 
 def get_data():
-    url = "https://api.binance.com/api/v3/ticker/24hr"
-    data = requests.get(url).json()
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {"vs_currency": "usd", "order": "volume_desc", "per_page": 20, "page": 1}
+    try:
+        data = requests.get(url, params=params).json()
+        coins = []
+        for d in data:
+            coins.append([
+                d["symbol"].upper(),
+                d["name"],
+                round(d["current_price"], 4),
+                round(d["total_volume"] / 1_000_000, 2),
+                round(d["price_change_percentage_24h"], 2)
+            ])
 
-    coins = []
-    for d in data:
-        if isinstance(d, dict) and isinstance(d.get('symbol'), str) and d['symbol'].endswith('USDT'):
-            try:
-                vol = float(d.get('quoteVolume', 0) or 0)
-                chg = abs(float(d.get('priceChangePercent', 0) or 0))
-                bid = float(d.get('bidPrice', 0) or 0)
-                ask = float(d.get('askPrice', 0) or 0)
-                if bid > 0 and ask > 0:
-                    spread = (ask - bid) / bid
-                    if spread > 0:
-                        liquidity = (vol * chg) / spread
-                        coins.append([
-                            d['symbol'],
-                            round(vol / 1_000_000, 2),
-                            round(chg, 2),
-                            round(spread * 100, 4),
-                            round(liquidity / 1_000_000, 2)
-                        ])
-            except:
-                continue
+        df = pd.DataFrame(coins, columns=["Symbol", "Name", "Price (USD)", "Volume (M USD)", "Change 24h (%)"])
+        return df
 
-    if not coins:
-        st.warning("⚠️ No valid data received from Binance. Try again in a few seconds.")
-        return pd.DataFrame(columns=["Symbol", "Volume (M USDT)", "Change %", "Spread %", "Liquidity Score"])
-
-    df = pd.DataFrame(coins, columns=["Symbol", "Volume (M USDT)", "Change %", "Spread %", "Liquidity Score"])
-    df = df.sort_values(by="Liquidity Score", ascending=False).head(20)
-    return df
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        return pd.DataFrame()
 
 if st.button("🔄 Update Data"):
     df = get_data()
-    st.success("Data updated successfully!")
     if not df.empty:
-        st.dataframe(df.style.background_gradient(cmap="YlGnBu", subset=["Liquidity Score", "Change %", "Volume (M USDT)"]))
+        st.success("Data updated successfully!")
+        st.dataframe(df.style.background_gradient(cmap="YlGnBu", subset=["Volume (M USD)", "Change 24h (%)"]))
+    else:
+        st.warning("⚠️ No data available right now.")
 else:
     st.info("Click 'Update Data' to fetch the latest information.")
