@@ -1,76 +1,75 @@
 import streamlit as st
-import pandas as pd
 import requests
+import pandas as pd
 import time
 
-st.set_page_config(page_title="Crypto Liquidity Monitor", layout="wide")
-st.title("💧 Top 20 Cryptos | 4H Inflow, 4H Change & TPS")
+st.set_page_config(page_title="Crypto Inflow (4h) - CryptoCompare", layout="wide")
+st.title("Top 30 by 4h Inflow (CryptoCompare)")
 
-def get_data():
-    url = "https://api.coingecko.com/api/v3/coins/markets"
-    params = {"vs_currency": "usd", "order": "volume_desc", "per_page": 20, "page": 1}
-    data = requests.get(url, params=params).json()
-    coins = []
+API_KEY = st.secrets["CRYPTOCOMPARE_API_KEY"]  # ضع المفتاح في Streamlit Secrets
 
-    for d in data:
-        symbol = d["symbol"].upper()
-        coin_id = d["id"]
+headers = {
+    "Apikey": API_KEY
+}
 
-        # بيانات آخر 4 ساعات
-        chart_url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
-        chart_params = {"vs_currency": "usd", "days": 0.2}  # ~4.8 ساعات
-        chart = requests.get(chart_url, params=chart_params).json()
+# مثال دالة تجيب بيانات histohour لحاجة واحدة (pair)
+def get_4h_inflow_for_symbol(fsym="BTC", tsym="USD"):
+    url = "https://min-api.cryptocompare.com/data/v2/histohour"
+    # نطلب 8 ساعات (نقدر نحسب آخر 4 ساعات + الـ4 ساعات السابقة)
+    params = {
+        "fsym": fsym,
+        "tsym": tsym,
+        "limit": 7,   # سيعيد 8 نقاط زمنية (0..7) -> نستخدم آخر 8 ساعات
+        "aggregate": 1
+    }
+    r = requests.get(url, params=params, headers=headers, timeout=10)
+    data = r.json()
+    bars = data.get("Data", {}).get("Data", [])
+    if len(bars) < 8:
+        return None  # بيانات غير كافية
+    # volumeto = حجم بالعملة المقابلة (USD مثلاً) لكل ساعة
+    vols = [bar.get("volumeto", 0) for bar in bars]
+    last4 = sum(vols[-4:])        # آخر 4 ساعات
+    prev4 = sum(vols[-8:-4])      # الأربع ساعات اللي قبلهم
+    # حساب التغير % (حماية من القسمة على صفر)
+    vol_change_pct = ((last4 - prev4) / prev4 * 100) if prev4 else None
+    return {
+        "fsym": fsym,
+        "tsym": tsym,
+        "4h_inflow": last4,
+        "4h_prev": prev4,
+        "4h_change_pct": vol_change_pct
+    }
 
-        volumes = [v[1] for v in chart.get("total_volumes", [])]
-        if len(volumes) >= 2:
-            vol_4h = (volumes[-1] - volumes[0]) / 1_000_000  # بالمليون دولار
-            vol_4h_change = ((volumes[-1] - volumes[0]) / volumes[0]) * 100
-        else:
-            vol_4h = 0
-            vol_4h_change = 0
+# مثال بسيط: استخدم قائمة رموز (يمكن تعديلها أو سحب قائمة ديناميكية لاحقاً)
+symbols = ["BTC","ETH","SOL","BNB","XRP","ADA","DOGE","DOT","LINK","LTC","TRX","MATIC","AVAX","FTM","NEAR","ATOM","BCH","XLM","ALGO","ICP","SAND","AXS","AAVE","MKR","ZEC","EGLD","MANA","GRT","SHIB","FTT"]
 
-        # تقدير بسيط لـ TPS
-        tps = round(d["total_volume"] / (d["current_price"] * 86_400), 2)
+rows = []
+for s in symbols:
+    try:
+        info = get_4h_inflow_for_symbol(fsym=s, tsym="USD")
+        if info:
+            rows.append({
+                "Symbol": s,
+                "4h Inflow (USD)": round(info["4h_inflow"], 2),
+                "4h Change %": round(info["4h_change_pct"], 2) if info["4h_change_pct"] is not None else None
+            })
+        time.sleep(0.25)  # تخفيف النداءات (rate limit)
+    except Exception as e:
+        continue
 
-        coins.append([
-            symbol,
-            d["name"],
-            round(d["current_price"], 4),
-            round(d["total_volume"] / 1_000_000, 2),
-            round(vol_4h, 2),
-            round(vol_4h_change, 2),
-            tps,
-            round(d["price_change_percentage_24h"], 2)
-        ])
+df = pd.DataFrame(rows)
+df = df.sort_values("4h Inflow (USD)", ascending=False).head(30)
 
-        time.sleep(0.4)
+# تلوين بسيط: أخضر للموجب، أحمر للسالب
+def color_pos_neg(val):
+    if val is None: return ""
+    try:
+        return "color: green" if val > 0 else "color: red" if val < 0 else ""
+    except:
+        return ""
 
-    df = pd.DataFrame(coins, columns=[
-        "Symbol", "Name", "Price (USD)",
-        "24h Volume (M USD)", "4h Inflow (M USD)",
-        "4h Volume Change (%)", "TPS", "Change 24h (%)"
-    ])
-
-    return df
-
-
-def color_positive_negative(val):
-    """لون أخضر للقيم الموجبة وأحمر للسالبة"""
-    if isinstance(val, (int, float)):
-        color = 'green' if val > 0 else 'red' if val < 0 else 'white'
-        return f'color: {color}'
-    return ''
-
-if st.button("🔄 Update Data"):
-    df = get_data()
-    if not df.empty:
-        st.success("✅ Data updated successfully!")
-
-        st.dataframe(
-            df.style.applymap(color_positive_negative, subset=["4h Volume Change (%)", "Change 24h (%)"])
-        )
-
-    else:
-        st.warning("⚠️ No data available right now.")
+if not df.empty:
+    st.dataframe(df.style.applymap(color_pos_neg, subset=["4h Change %"]), use_container_width=True)
 else:
-    st.info("Click 'Update Data' to fetch the latest information.")
+    st.warning("No data — تأكد من صلاحية API key أو جرّب لاحقًا.")
